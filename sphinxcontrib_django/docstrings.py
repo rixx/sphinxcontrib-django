@@ -30,6 +30,7 @@ _FIELD_DESCRIPTORS = (FileDescriptor,)
 RE_GET_FOO_DISPLAY = re.compile('\.get_(?P<field>[a-zA-Z0-9_]+)_display$')
 RE_GET_NEXT_BY = re.compile('\.get_next_by_(?P<field>[a-zA-Z0-9_]+)$')
 RE_GET_PREVIOUS_BY = re.compile('\.get_previous_by_(?P<field>[a-zA-Z0-9_]+)$')
+DJANGO_VERSION = ".".join(map(str, django.VERSION[0:2]))
 
 
 # Support for some common third party fields
@@ -138,6 +139,7 @@ def _add_model_fields_as_params(app, obj, lines):
         for line in lines
         if line.startswith(':type ') and ':' in line[type_offset:]
     ]
+    references = dict()
 
     for field in obj._meta.get_fields():
         try:
@@ -160,12 +162,20 @@ def _add_model_fields_as_params(app, obj, lines):
 
         # Add type
         if field.name not in predefined_types:
-            lines.append(_get_field_type(field))
+            field, field_refs = _get_field_type(field)
+            lines.append(field)
+            if field_refs:
+                references.update(field_refs)
 
     if 'sphinx.ext.inheritance_diagram' in app.extensions and \
             'sphinx.ext.graphviz' in app.extensions and \
             not any('inheritance-diagram::' in line for line in lines):
         lines.append('.. inheritance-diagram::')
+
+    if references:
+        lines.append('')
+        for name in references:
+            lines.append(u'.. _%s: %s' % (name, references[name]))
 
 
 def _add_form_fields(obj, lines):
@@ -186,6 +196,16 @@ def _add_form_fields(obj, lines):
         ))
 
 
+def _get_url_dict(klass):
+    lookup = {
+        'django.db.models': 'https://docs.djangoproject.com/en/%s/ref/models/fields/#django.db.models.' % DJANGO_VERSION
+    }
+
+    for key in lookup:
+        if klass.__module__.startswith(key):
+            return {klass.__name__: lookup[key] + klass.__name__}
+
+
 def _get_field_type(field):
     if isinstance(field, models.ForeignKey):
         if django.VERSION >= (2, 0):
@@ -197,10 +217,21 @@ def _get_field_type(field):
             if isinstance(to, str):
                 to = _resolve_model(field, to)
 
+        klass = type(field)
+        url_dict = _get_url_dict(klass)
+        if url_dict:
+            return u':type %s: `%s`_ to :class:`~%s.%s`' % (
+                field.name, klass.__name__, to.__module__, to.__name__
+            ), url_dict
         return u':type %s: %s to :class:`~%s.%s`' % (
-            field.name, type(field).__name__, to.__module__, to.__name__)
+            field.name, klass.__name__, to.__module__, to.__name__
+        ), None
     else:
-        return u':type %s: %s' % (field.name, type(field).__name__)
+        klass = type(field)
+        url_dict = _get_url_dict(klass)
+        if url_dict:
+            return u':type %s: `%s`_' % (field.name, klass.__name__), url_dict
+        return u':type %s: %s' % (field.name, klass.__name__), None
 
 
 def _resolve_model(field, to):
